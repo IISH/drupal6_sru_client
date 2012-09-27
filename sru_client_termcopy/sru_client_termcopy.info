@@ -1,0 +1,8 @@
+name = SRU Client Term Copy
+description = Copies terms from the corresponding collection to SRU Assets.
+dependencies[] = sru_client
+dependencies[] = taxonomy
+package = IISG Content Mashup Platform
+version = "6.x-1.0"
+core = 6.x
+

@@ -1,0 +1,7 @@
+; $Id$
+name = MARC XML standard implementation
+description =  MARC XML standard implementation for SRU Client
+package = IISG Content Mashup Platform
+core = 6.x
+version = "6.x-1.2"
+dependencies[] = sru_client

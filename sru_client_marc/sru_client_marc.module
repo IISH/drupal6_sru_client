@@ -1,0 +1,385 @@
+<?php
+// $Id$
+/**
+ * Copyright (c) 2009 Madcap BV (http://www.madcap.nl)
+ * All rights reserved.
+ *
+ * Permission is granted for use, copying, modification, distribution,
+ * and distribution of modified versions of this work as long as the
+ * above copyright notice is included.
+ *
+ * Copyright (c) 2010 IISG (http://www.iisg.nl)
+ *
+ * @file
+ *  MARC XML standard implementation for SRU Client.
+ */
+
+/**
+ * Implementation of hook_sru_info().
+ */
+function sru_client_marc_sru_info() {
+  return array(
+    'name' => 'MARC',
+  );
+}
+
+/**
+ * Implementation of hook_sru_query().
+ *
+ * @param $query
+ * @param $collection
+ * @return string
+ */
+function sru_client_marc_sru_url_arguments($query, $collection, $maximum_records, $start_record) {
+  // Construct the complete argument list.
+  $arguments = array(
+    'query' => $query,
+    'version' => '1.1',
+    'operation' => 'searchRetrieve',
+    'recordSchema' => 'info:srw/schema/1/marcxml-v1.1',
+    'maximumRecords' => $maximum_records, //TODO: numberOfRecords?
+    'startRecord' => $start_record,
+    'resultSetTTL' => 3000,
+    'recordPacking' => 'xml',
+  );
+  // NOTE the second and third argument in the next function call are necessary, see the settings file
+  return http_build_query($arguments, '', '&');
+}
+
+/**
+ * Implementation of hook_sru_extract_fields().
+ *
+ * @param $record
+ *   An array containing the SRW record structure.
+ * @return array
+ *   An array containing a selection of fieldnames and values.
+ */
+function sru_client_marc_sru_extract_fields($record) {
+  $fields = array();
+  // Title.
+  $fields['title'] = FALSE;
+  if (isset($record['marc:datafield'][245]['a']) && !empty($record['marc:datafield'][245]['a'])) {
+    $fields['title'] = $record['marc:datafield'][245]['a'];
+  }
+  if ($fields['title'] != FALSE) {
+    // if there is a " :" at the end of the string remove it
+    $fields['title'] = preg_replace('/ :$/', '', $fields['title']);
+  }
+
+  // Description.
+  $fields['description'] = FALSE;
+  $i = 0;
+  if (isset($record['marc:datafield'][500]['a'.$i]) && !empty($record['marc:datafield'][500]['a'.$i])) {
+    while (isset($record['marc:datafield'][500]['a'.$i])) {
+      $fields['description'][] = $record['marc:datafield'][500]['a'.$i];
+      $i++;
+    }
+  }
+  sru_client_marc_transform_field($fields['description'], ' / ');
+
+  // Author.
+  $fields['author'] = FALSE;
+  if (isset($record['marc:datafield'][100]['a'])) {
+    $fields['author'][] = $record['marc:datafield'][100]['a'];
+    if (isset($record['marc:datafield'][100]['c'])) {
+      $fields['author'][] = $record['marc:datafield'][100]['c'];
+    }
+  }
+  elseif (isset($record['marc:datafield'][110]['a'])) {
+    $fields['author'][] = $record['marc:datafield'][110]['a'];
+  }
+  elseif (isset($record['marc:datafield'][700])) {
+    $fields['author'][] = $record['marc:datafield'][700];
+  }
+  elseif (isset($record['marc:datafield'][710])) {
+    $fields['author'][] = $record['marc:datafield'][710];
+  }
+  sru_client_marc_transform_field($fields['author'], ' ');
+
+  // Material.
+  $fields['material'] = FALSE;
+  if (isset($record['marc:datafield'][603]['a0'])) {
+    $fields['material'] = $record['marc:datafield'][603]['a0'];
+  }
+  elseif (isset($record['marc:datafield'][655]['a'])) {
+    $fields['material'] = $record['marc:datafield'][655]['a'];
+  }
+
+  // Year.
+  $fields['year'] = FALSE;
+  if (isset($record['marc:datafield'][260]['c'])) {
+    $fields['year'] = $record['marc:datafield'][260]['c'];
+  }
+  elseif (isset($record['marc:datafield'][604]['b'])) {
+    $fields['year'] = $record['marc:datafield'][604]['b'];
+  }
+
+  // Period.
+  $fields['period'] = FALSE;
+  if (isset($record['marc:datafield'][245]['f'])) {
+    $fields['period'] = $record['marc:datafield'][245]['f'];
+  }
+
+  // Size.
+  $fields['size'] = FALSE;
+  if (isset($record['marc:datafield'][300]['d'])) {
+    $fields['size'] = $record['marc:datafield'][300]['d'];
+  }
+
+  // Subject.
+  $fields['subject'] = FALSE;
+  $i = 0;
+  if (isset($record['marc:datafield'][600]['a'.$i])) {
+    while (isset($record['marc:datafield'][600]['a'.$i])) {
+      $fields['subject'][] = $record['marc:datafield'][600]['a'.$i];
+      $i++;
+    }
+    if (isset($record['marc:datafield'][610]['a'])) {
+      $fields['subject'][] = $record['marc:datafield'][610]['a'];
+    }
+    // 603 - de rest, ofwel niet de eerste want dat is materiaal
+    $j = 1;
+    while (isset($record['marc:datafield'][603]['a'.$j])) {
+      $fields['subject'][] = $record['marc:datafield'][603]['a'.$j];
+      $j++;
+    }
+  }
+  // veld 650 is nieuw voor mij, bestaat ook uit meerdere 650 a waarden.
+  $k = 0;
+  while (isset($record['marc:datafield'][650]['a'.$k])) {
+    $fields['subject'][] = $record['marc:datafield'][650]['a'.$k];
+    $k++;
+  }
+  sru_client_marc_transform_field($fields['subject'], ' / ');
+
+  // Location.
+  $fields['location'] = FALSE;
+  if (isset($record['marc:datafield'][605]['e'])) {
+    $fields['location'][] = $record['marc:datafield'][605]['e'];
+    if (isset($record['marc:datafield'][605]['g'])) {
+      $fields['location'][] = $record['marc:datafield'][605]['g'];
+    }
+  }
+  elseif (isset($record['marc:datafield'][605]['g'])) {
+    $fields['location'][] = $record['marc:datafield'][605]['g'];
+  }
+  elseif (isset($record['marc:datafield'][260]['a'])) {
+    $fields['location'][] = $record['marc:datafield'][260]['a'];
+  }
+  sru_client_marc_transform_field($fields['location'], ' / ');
+
+  // Consultation.
+  $fields['consultation'] = FALSE;
+  if (isset($record['marc:datafield'][506]['a'])) {
+    $fields['consultation'] = $record['marc:datafield'][506]['a'];
+  }
+
+  // Copyright.
+  $fields['copyright'] = FALSE;
+  if (isset($record['marc:datafield'][540]['b'])) {
+    $fields['copyright'] = $record['marc:datafield'][540]['b'];
+  }
+
+  // Secondary creator.
+  $fields['secondary creator'] = FALSE;
+  if (isset($record['marc:datafield'][700]['a'])) {
+    $fields['secondary creator'][] = $record['marc:datafield'][700]['a'];
+    if (isset($record['marc:datafield'][710]['a'])) {
+      $fields['secondary creator'][] = $record['marc:datafield'][710]['a'];
+    }
+  }
+  sru_client_marc_transform_field($fields['secondary creator'], ' ');
+
+  // Biography/History.
+  $fields['biography/history'] = FALSE;
+  if (isset($record['marc:datafield'][545]['a'])) {
+    $fields['biography/history'] = $record['marc:datafield'][545]['a'];
+  }
+
+  // Content.
+  $fields['content'] = FALSE;
+  if (isset($record['marc:datafield'][520]['a'])) {
+    $fields['content'] = $record['marc:datafield'][520]['a'];
+  }
+
+  // Collection Name
+  $fields['collectionName'] = FALSE;
+  if (isset($record['iisg:collectionName'])) {
+    $fields['collectionName'] = $record['iisg:collectionName'];
+  }
+
+  //Deeplink
+  $fields['deeplink'] = FALSE;
+  if (isset($record['iisg:isShownAt'])) {
+    $fields['deeplink'] = $record['iisg:isShownAt'];
+    // replace lang=en by lang=nl
+    $fields['deeplink'] = str_replace('&lang=en', '&lang=nl', $fields['deeplink']);
+  }
+
+  // Source.
+  $fields['source'] = FALSE;
+  if (isset($record['iisg:isShownBy'])) {
+    $fields['source'] = $record['iisg:isShownBy'];
+  }
+
+  // Keywords.
+  $fields['keywords'] = FALSE;
+  $i = 0;
+  if (isset($record['marc:datafield'][650]['a'.$i]) && !empty($record['marc:datafield'][650]['a'.$i])) {
+    while (isset($record['marc:datafield'][650]['a'.$i])){
+      // Keywords may be separated by either , or /; we'll standardize on /.
+      $fields['keywords'][] = str_replace(',', '/', $record['marc:datafield'][650]['a'.$i]);
+      $i++;
+    }
+  }
+  $j = 0;
+  if (isset($record['marc:datafield'][603]['a'.$j]) && !empty($record['marc:datafield'][603]['a'.$j])) {
+    while (isset($record['marc:datafield'][603]['a'.$j])){
+      $fields['keywords'][] = $record['marc:datafield'][603]['a'.$j];
+      $j++;
+    }
+  }
+  $k = 0;
+  if (isset($record['marc:datafield'][600]['a'.$k]) && !empty($record['marc:datafield'][600]['a'.$k])) {
+    while (isset($record['marc:datafield'][600]['a'.$k])) {
+      $fields['keywords'][] = $record['marc:datafield'][600]['a'.$k];
+      $k++;
+    }
+  }
+  if (isset($record['marc:datafield'][610]['a'])) {
+    $fields['keywords'][] = $record['marc:datafield'][610]['a'];
+  }
+  if (isset($record['marc:datafield'][605]['g'])) {
+    $fields['keywords'][] = $record['marc:datafield'][605]['g'];
+  }
+  sru_client_marc_transform_field($fields['keywords'], ' / ');
+
+  return $fields;
+}
+
+function sru_client_marc_transform_field(&$field, $glue) {
+  if ($field != FALSE) {
+    $field = implode($glue, $field);
+  }
+}
+
+/**
+ * Implementation of hook_sru_convert_xml().
+ *
+ * @param $xml
+ *   String containing the xml content returned by the webservice.
+ * @param $cnid
+ *   Integer containing the collection id.
+ * @return array
+ *   An array containing the SRW record structure.
+ */
+function sru_client_marc_sru_convert_xml($xml, $cnid) {
+  $result = array();
+
+  // Create a new dom object.
+  $dom = new DOMDocument();
+
+  // Load the xml string.
+  $dom->loadXML($xml);
+
+  $marc = $dom->getElementsByTagName('record');
+
+  for ($i = 0; $i < $marc->length; $i++) {
+    //START
+    $counter_for_material = 0;
+    $counter_for_subject = 0;
+    $counter_for_description = 0;
+    $counter_for_another_subject = 0;
+    //EIND
+    // WORKAROUND due to tags 'marc_record' and 'record'
+    if ($marc->item($i)->parentNode->nodeName =='records') {
+      $result[$i]['cnid'] = $cnid;
+      foreach ($marc->item($i)->childNodes as $node) {
+        if ($node->nodeName == 'recordData') {
+	        foreach ($node->childNodes as $recordData) {
+	          if ($recordData->nodeName == 'marc:record') {
+	            foreach ($recordData->childNodes as $marcRecord) {
+	              if ($marcRecord->nodeName == 'marc:controlfield') {
+              	  if ($tag = $marcRecord->getAttribute('tag')) {
+          	        $result[$i][$marcRecord->nodeName][$tag] = $marcRecord->nodeValue;
+        	        }
+      	        }
+	              elseif ($marcRecord->nodeName == 'marc:datafield') {
+		              if ($tag = $marcRecord->getAttribute('tag')) {
+                    foreach ($marcRecord->childNodes as $marcRecord_child_node) {
+                      if ($code = $marcRecord_child_node->getAttribute('code')) {
+                        // voeg volgnummer toe aan laatste key (in dit geval code)
+                        if ($tag == '603' && $code == 'a') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code.$counter_for_material] = $marcRecord_child_node->nodeValue;
+                          $counter_for_material++;
+                        }
+                        // voeg volgnummer toe aan laatste key (in dit geval code)
+                        if ($tag == '650' && $code == 'a') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code.$counter_for_another_subject] = $marcRecord_child_node->nodeValue;
+                          $counter_for_another_subject++;
+                        }
+                  			if ($tag == '600') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code.$counter_for_subject] = $marcRecord->nodeValue;
+                          $counter_for_subject++;
+                        }
+                  			elseif ($tag == '100') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code] = $marcRecord_child_node->nodeValue;
+                        }
+                  			elseif ($tag == '245') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code] = $marcRecord_child_node->nodeValue;
+                        }
+                  			elseif ($tag == '605') {
+                  			  $result[$i][$marcRecord->nodeName][$tag][$code] = $marcRecord_child_node->nodeValue;
+                  			}
+                        elseif ($tag == '500') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code.$counter_for_description] = $marcRecord->nodeValue;
+                          $counter_for_description++;
+                        }
+                        else {
+                          //END
+                          $result[$i][$marcRecord->nodeName][$tag][$code] = $marcRecord->nodeValue;
+                          //START
+                        }
+		                  }
+		                }
+                  }
+                }
+      	      }
+	          }
+	        }
+	      }
+        elseif ($node->nodeName == 'extraRecordData') {
+          foreach ($node->childNodes as $child_node) {
+            if (substr($child_node->nodeName, -9) == 'extraData') {
+              foreach($child_node->childNodes as $grandchild_node) {
+                if (substr($grandchild_node->nodeName, 0, 4) == 'iisg') {
+                  $result[$i][$grandchild_node->nodeName] = $grandchild_node->nodeValue;
+                }
+              }
+            }
+          }
+        }
+        else {
+          $result[$i][$recordData->nodeName] = $recordData->nodeValue;
+        }
+      }
+    }
+  }
+  return $result;
+}
+
+/**
+ * Implementation of hook_sru_condition_fields().
+ *
+ * @return array
+ */
+function sru_client_marc_sru_condition_fields() {
+  return array(
+    'marc.500$a', // Title.
+    'marc.245$a', // Description.
+    'marc.852$b',
+    'marc.710',   // Author.
+    'marc.100',
+    'marc.700',
+  );
+}

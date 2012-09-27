@@ -1,0 +1,9 @@
+; $Id$
+name = SRU Client Taxonomy
+description = Enables using SRU Asset fields in taxonomy.
+dependencies[] = sru_client
+dependencies[] = taxonomy
+package = IISG Content Mashup Platform
+version = "6.x-1.0"
+core = 6.x
+

@@ -1,0 +1,9 @@
+; $Id$
+name = SRU Client Image 
+description = Adds thumbnail copies of images to SRU asset nodes.
+package = IISG Content Mashup Platform
+core = 6.x
+version = "6.x-1.2"
+dependencies[] = sru_client
+
+

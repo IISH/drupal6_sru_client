@@ -1,0 +1,8 @@
+Two attempts to make the MARC module more generic:
+
+  sru_client_marc.module.2: cleanup sru_client_marc_sru_convert_xml()
+
+  sru_client_marc.module.3: make sru_client_marc_sru_extract_fields() generic. 
+  By using an array it should be possible to configure this using a web interface.
+
+

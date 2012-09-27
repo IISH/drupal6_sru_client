@@ -1,0 +1,281 @@
+<?php
+// $Id$
+/**
+ * Copyright (c) 2009 Madcap BV (http://www.madcap.nl)
+ * All rights reserved.
+ *
+ * Permission is granted for use, copying, modification, distribution,
+ * and distribution of modified versions of this work as long as the
+ * above copyright notice is included.
+ *
+ * Copyright (c) 2010 IISG (http://www.iisg.nl)
+ *
+ * @file
+ *  MARC XML standard implementation for SRU Client.
+ */
+
+$extradata = 'iisg';
+
+/**
+ * Implementation of hook_sru_info().
+ */
+function sru_client_marc_sru_info() {
+  return array(
+    'name' => 'MARC',
+  );
+}
+
+/**
+ * Implementation of hook_sru_query().
+ *
+ * @param $query
+ * @param $collection
+ * @return string
+ */
+function sru_client_marc_sru_url_arguments($query, $collection, $maximum_records, $start_record) {
+  // Construct the complete argument list.
+  $arguments = array(
+    'query' => $query,
+    'version' => '1.1',
+    'operation' => 'searchRetrieve',
+    'recordSchema' => 'info:srw/schema/1/marcxml-v1.1',
+    'maximumRecords' => $maximum_records, //TODO: numberOfRecords?
+    'startRecord' => $start_record,
+    'resultSetTTL' => 3000,
+    'recordPacking' => 'xml',
+  );
+  // NOTE the second and third argument in the next function call are necessary, see the settings file
+  return http_build_query($arguments, '', '&');
+}
+
+/**
+ * Implementation of hook_sru_extract_fields().
+ *
+ * @param $record
+ *   An array containing the SRW record structure.
+ * @return array
+ *   An array containing a selection of fieldnames and values.
+ */
+function sru_client_marc_sru_extract_fields($record) {
+  global $extradata;
+  $fields  = array();
+  $mapping = array();
+
+  // Mapping table.
+  // Each fieldname can have several mapping arrays.
+  // Each mapping array can have several tags. These tags will be concatenated.
+  // If the first mapping array for a fieldname yields no result the next one will be attempted.
+  // E.g. author = 100a + 100c + 110a. If empty author = 700. If still empty author = 710.
+  $mapping['title'][]             = array(array('tag' => 245, 'code' => 'a'));
+  $mapping['description'][]       = array(array('tag' => 500, 'code' => 'a', 'counter' => 0));
+  $mapping['author'][]            = array(array('tag' => 100, 'code' => 'a'), 
+                                          array('tag' => 100, 'code' => 'c')); 
+  $mapping['author'][]            = array(array('tag' => 110, 'code' => 'a'));
+  $mapping['author'][]            = array(array('tag' => 700));
+  $mapping['author'][]            = array(array('tag' => 710));
+  $mapping['material'][]          = array(array('tag' => 603, 'code' => 'a', 'counter' => 0, 'single' => TRUE));
+  $mapping['material'][]          = array(array('tag' => 655, 'code' => 'a'));
+  $mapping['year'][]              = array(array('tag' => 260, 'code' => 'c'));
+  $mapping['year'][]              = array(array('tag' => 604, 'code' => 'b'));
+  $mapping['period'][]            = array(array('tag' => 245, 'code' => 'f'));
+  $mapping['size'][]              = array(array('tag' => 300, 'code' => 'd'));
+  $mapping['subject'][]           = array(array('tag' => 600, 'code' => 'a', 'counter' => 0), 
+                                          array('tag' => 610, 'code' => 'a'), 
+                                          array('tag' => 603, 'code' => 'a', 'counter' => 1));
+  $mapping['subject'][]           = array(array('tag' => 650, 'code' => 'a', 'counter' => 0)); 
+  $mapping['location'][]          = array(array('tag' => 605, 'code' => 'e'), 
+                                          array('tag' => 605, 'code' => 'g'));
+  $mapping['location'][]          = array(array('tag' => 260, 'code' => 'a'));
+  $mapping['consultation'][]      = array(array('tag' => 506, 'code' => 'a'));
+  $mapping['permissions'][]       = array(array('tag' => 540, 'code' => 'b'));
+  $mapping['secondary creator'][] = array(array('tag' => 700, 'code' => 'a'), 
+                                          array('tag' => 710, 'code' => 'a'));
+  $mapping['biography/history'][] = array(array('tag' => 545, 'code' => 'a'));
+  $mapping['content'][]           = array(array('tag' => 520, 'code' => 'a'));
+  $mapping['collectionName'][]    = array(array('tag' => 'collectionName', 'extradata' => $extradata));
+  $mapping['deeplink'][]          = array(array('tag' => 'isShownAt', 'extradata' => $extradata));
+  $mapping['source'][]            = array(array('tag' => 'isShownBy', 'extradata' => $extradata));
+
+  // First set all fields to FALSE.
+  foreach ($mapping as $name => $maps) {
+    $fields[$name] = FALSE;
+  }
+  foreach ($mapping as $name => $maps) {
+    foreach ($maps as $map) {
+      if ($fields[$name] == FALSE) {
+        foreach ($map as $values) {
+          if (isset($values['extradata'])) {
+            // Fields from the extradata namespace.
+            if (isset($record[$values['tag']])) {
+              $fields[$name] = $record[$values['extradata'] .':'. $values['tag']];
+            }
+          } 
+          elseif (isset($values['counter'])) {
+            // Several instances of the same tag-code combination exist.
+            $i = $values['counter'];
+            if (isset($record['marc:datafield'][$values['tag']][$values['code'].$i]) && !empty($record['marc:datafield'][$values['tag']][$values['code'].$i])) {
+              while (isset($record['marc:datafield'][$values['tag']][$values['code'].$i])) {
+                $fields[$name][] = $record['marc:datafield'][$values['tag']][$values['code'].$i];
+                if (isset($values['single'])) {
+                  // Only use the first instance.
+                  break;
+                } 
+                else {
+                  $i++;
+                }
+              }
+            }
+          } 
+          elseif (isset($values['code'])) {
+            if (isset($record['marc:datafield'][$values['tag']][$values['code']]) && !empty($record['marc:datafield'][$values['tag']][$values['code']])) {
+              $fields[$name] = $record['marc:datafield'][$values['tag']][$values['code']];
+            }
+          } 
+          elseif (isset($values['tag'])) {
+            if (isset($record['marc:datafield'][$values['tag']])) {
+              $fields['author'][] = $record['marc:datafield'][$values['tag']];
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Post-process: flatten arrays to strings, replace certain characters.
+  sru_client_marc_transform_field($fields['title'],             'implode');
+  sru_client_marc_transform_field($fields['title'],             'remove', '/ :$/');
+  sru_client_marc_transform_field($fields['description'],       'implode', ' / ');
+  sru_client_marc_transform_field($fields['author'],            'implode', ' ');
+  sru_client_marc_transform_field($fields['material'],          'implode');
+  sru_client_marc_transform_field($fields['year'],              'implode');
+  sru_client_marc_transform_field($fields['period'],            'implode');
+  sru_client_marc_transform_field($fields['size'],              'implode');
+  sru_client_marc_transform_field($fields['subject'],           'implode', ' / ');
+  sru_client_marc_transform_field($fields['location'],          'implode', ' / ');
+  sru_client_marc_transform_field($fields['consultation'],      'implode');
+  sru_client_marc_transform_field($fields['permissions'],       'implode');
+  sru_client_marc_transform_field($fields['secondary creator'], 'implode', ' ');
+  sru_client_marc_transform_field($fields['biography/history'], 'implode');
+  sru_client_marc_transform_field($fields['content'],           'implode');
+  sru_client_marc_transform_field($fields['deeplink'],          'replace', '&lang=en', '&lang=nl');
+
+  return $fields;
+}
+
+function sru_client_marc_transform_field(&$field, $operation, $string1 = '', $string2 = '') {
+  if ($field != FALSE) {
+    switch ($operation) {
+      case 'implode':
+        $field = implode($string1, $field);
+        break;
+      case 'remove':
+        $field = preg_replace($string1, '', $field);
+        break;
+      case 'replace':
+        $field = str_replace($string1, $string2, $field);
+        break;
+    }
+  }
+}
+
+
+/**
+ * Implementation of hook_sru_convert_xml().
+ *
+ * @param $xml
+ *   String containing the xml content returned by the webservice.
+ * @param $cnid
+ *   Integer containing the collection id.
+ * @return array
+ *   An array containing the SRW record structure.
+ */
+function sru_client_marc_sru_convert_xml($xml, $cnid) {
+  global $extradata;
+  $result = array();
+
+  // Create a new dom object.
+  $dom = new DOMDocument();
+
+  // Load the xml string.
+  $dom->loadXML($xml);
+
+  $marc = $dom->getElementsByTagName('record');
+
+  $counter = array();
+  for ($i = 0; $i < $marc->length; $i++) {
+    // WORKAROUND due to tags 'marc_record' and 'record'
+    if ($marc->item($i)->parentNode->nodeName =='records') {
+      $result[$i]['cnid'] = $cnid;
+      foreach ($marc->item($i)->childNodes as $node) {
+        if ($node->nodeName == 'recordData') {
+	        foreach ($node->childNodes as $recordData) {
+	          if ($recordData->nodeName == 'marc:record') {
+	            foreach ($recordData->childNodes as $marcRecord) {
+                if ($tag = $marcRecord->getAttribute('tag')) {
+                  if (!isset($counter[$tag])) {
+                    $counter[$tag] = 0;
+                  }
+	                if ($marcRecord->nodeName == 'marc:controlfield') {
+          	        $result[$i][$marcRecord->nodeName][$tag] = $marcRecord->nodeValue;
+      	          }
+	                elseif ($marcRecord->nodeName == 'marc:datafield') {
+                    foreach ($marcRecord->childNodes as $marcRecord_child_node) {
+                      if ($code = $marcRecord_child_node->getAttribute('code')) {
+                        if (in_array($tag, array('603', '650')) && $code == 'a') {
+                          $result[$i][$marcRecord->nodeName][$tag][$code.$counter[$tag]] = $marcRecord_child_node->nodeValue;
+                          $counter[$tag]++;
+                        }
+                  			if (in_array($tag, array('500', '600'))) {
+                          $result[$i][$marcRecord->nodeName][$tag][$code.$counter[$tag]] = $marcRecord->nodeValue;
+                          $counter[$tag]++;
+                        }
+                  			elseif (in_array($tag, array('100', '245', '605'))) {
+                          $result[$i][$marcRecord->nodeName][$tag][$code] = $marcRecord_child_node->nodeValue;
+                        }
+                        else {
+                          $result[$i][$marcRecord->nodeName][$tag][$code] = $marcRecord->nodeValue;
+                        }
+		                  }
+		                }
+                  }
+                }
+      	      }
+	          }
+	        }
+	      }
+        elseif ($node->nodeName == 'extraRecordData') {
+          foreach ($node->childNodes as $child_node) {
+            if (substr($child_node->nodeName, -9) == 'extraData') {
+              foreach($child_node->childNodes as $grandchild_node) {
+                list($namespace, $remainder) = explode(':', $grandchild_node->nodeName, 2);
+                if ($namespace == $extradata) {
+                  $result[$i][$grandchild_node->nodeName] = $grandchild_node->nodeValue;
+                }
+              }
+            }
+          }
+        }
+        else {
+          $result[$i][$recordData->nodeName] = $recordData->nodeValue;
+        }
+      }
+    }
+  }
+  return $result;
+}
+
+/**
+ * Implementation of hook_sru_condition_fields().
+ *
+ * @return array
+ */
+function sru_client_marc_sru_condition_fields() {
+  return array(
+    'marc.500$a', // Title.
+    'marc.245$a', // Description.
+    'marc.852$b',
+    'marc.710',   // Author.
+    'marc.100',
+    'marc.700',
+  );
+}

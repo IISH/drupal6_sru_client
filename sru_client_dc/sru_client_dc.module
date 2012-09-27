@@ -1,0 +1,153 @@
+<?php
+// $Id$
+/**
+ * Copyright (c) 2009 Madcap BV (http://www.madcap.nl)
+ * All rights reserved.
+ *
+ * Permission is granted for use, copying, modification, distribution,
+ * and distribution of modified versions of this work as long as the
+ * above copyright notice is included.
+ *
+ * Copyright (c) 2010 IISG (http://www.iisg.nl)
+ *
+ * @file
+ *  Dublin Core XML standard implementation for SRU Client.
+ */
+
+/**
+ * Implementation of hook_sru_info().
+ */
+function sru_client_dc_sru_info() {
+  return array(
+    'name' => 'Dublin Core',
+  );
+}
+
+/**
+ * Implementation of hook_sru_query().
+ *
+ * @param $query
+ * @param $collection
+ * @return string
+ */
+function sru_client_dc_sru_url_arguments($query, $collection, $maximum_records, $start_record) {
+  // Construct the complete argument list.
+  $arguments = array(
+    'query' => $query,
+    'version' => '1.1',
+    'operation' => 'searchRetrieve',
+    'recordSchema' => 'info:srw/schema/1/dc',
+    'maximumRecords' => $maximum_records,
+    'startRecord' => $start_record,
+    'resultSetTTL' => 3000,
+    'recordPacking' => 'xml',
+    'sortKeys' => 'relevance',
+    'wskey' => 'j0id8nhFjyfWOXvRAjxCZX2DUMtZzJKfxWnS25LAIp0qxBOZzP2UnhSzMey6vDUTFWuva5MWAlpuONVm',
+    'servicelevel' => 'default',
+  );
+  // NOTE the second and third argument in the next function call are necessary, see the settings file
+  return http_build_query($arguments, '', '&');
+}
+
+/**
+ * Implementation of hook_sru_extract_fields().
+ *
+ * @param $record
+ *   An array containing the SRW record structure.
+ * @return array
+ *   An array containing a selection of fieldnames and values.
+ */
+function sru_client_dc_sru_extract_fields($record) {
+  $fields = array();
+
+  // Title.
+  $fields['title'] = FALSE;
+  if (isset($record['dc:title'])) {
+    $fields['title'] = $record['dc:title'];
+  }
+
+  // Description.
+  if (isset($record['dc:description'])) {
+    $fields['description'] = $record['dc:description'];
+  }
+
+  // Author.
+  $fields['author'] = FALSE;
+  if (isset($record['dc:creator'])) {
+    $fields['author'] = $record['dc:creator'];
+  }
+
+  // Year.
+  $fields['year'] = FALSE;
+  if (isset($record['dc:date'])) {
+    $fields['year'] = $record['dc:date'];
+  }
+
+  // Subject.
+  $fields['subject'] = FALSE;
+  if (isset($record['dc:subject'][0])) {
+    $fields['subject'] = $record['dc:subject'][0];
+  }
+
+  // Fields not found within the dc definitions.
+  $fields['theme'] = FALSE;
+  $fields['permissions'] = FALSE;
+  $fields['source'] = FALSE;
+  $fields['location'] = FALSE;
+  $fields['material'] = FALSE;
+  return $fields;
+}
+
+/**
+ * Implementation of hook_sru_convert_xml().
+ *
+ * @param $xml
+ *   String containing the xml content returned by the webservice.
+ * @param $cnid
+ *   Integer containing the collection id.
+ * @return array
+ *   An array containing the SRW record structure.
+ */
+function sru_client_dc_sru_convert_xml($xml, $cnid) {
+  // Create a new dom object.
+  $dom = new DOMDocument();
+
+  // Load the xml string.
+  $dom->loadXML($xml);
+
+  $result = array();
+
+  // Each result record does have one dc:dc element.
+  $dc = $dom->getElementsByTagName('oclcdcs');
+
+  for ($i=0;$i<$dc->length;$i++) {
+    $result[$i]['cnid'] = $cnid;
+    foreach ($dc->item($i)->childNodes as $node) {
+      if (isset($result[$i][$node->nodeName])) {
+        if (is_string($result[$i][$node->nodeName])) {
+          // Convert to an array, so we can add new items.
+          $result[$i][$node->nodeName] = array($result[$i][$node->nodeName]);
+        }
+        $result[$i][$node->nodeName][] = trim($node->nodeValue);
+      }
+      else {
+        $result[$i][$node->nodeName] = trim($node->nodeValue);
+      }
+    }
+  }
+
+  return $result;
+}
+
+/**
+ * Implementation of hook_sru_condition_fields().
+ *
+ * @return array
+ */
+function sru_client_dc_sru_condition_fields() {
+  return array(
+    'srw.ti', // Title.
+    'srw.su', // Subject.
+    'srw.au', // Author.
+  );
+}

@@ -1,0 +1,14 @@
+<?php
+// $Id$
+
+
+function sru_client_taxonomy_install() {
+  // Set the weight of the sru_client_taxonomy.module to 1 so it is loaded after the sru_client.module.
+  db_query("UPDATE {system} SET weight = 1 WHERE name = 'sru_client_taxonomy'");
+}
+
+function sru_client_taxonomy_uninstall() {
+  variable_del('sru_client_taxonomy_field');
+  variable_del('sru_client_taxonomy_vocabulary');
+}
+

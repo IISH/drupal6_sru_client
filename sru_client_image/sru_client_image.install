@@ -1,0 +1,61 @@
+<?php
+// $Id$
+
+/**
+ * Install the initial schema.
+ */
+function sru_client_image_schema() {
+  $schema['sru_client_image'] = array(
+    'description' => t('Adds a copy of a thumbnail to an asset.'),
+    'fields' => array(
+      'fid' => array(
+        'type' => 'int',
+        'unsigned' => TRUE,
+        'not null' => TRUE,
+        'description' => t('Primary Key: The {files}.fid.'),
+      ),
+      'vid' => array(
+        'type' => 'int',
+        'size' => 'medium',
+        'not null' => TRUE,
+      ),
+      'nid' => array(
+        'type' => 'int',
+        'size' => 'medium',
+        'not null' => TRUE,
+      ),
+      'width' => array(
+        'type' => 'int',
+        'size' => 'small',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+      'height' => array(
+        'type' => 'int',
+        'size' => 'small',
+        'not null' => TRUE,
+        'default' => 0,
+      ),
+    ),
+    'primary key' => array('vid', 'fid'),
+    'indexes' => array(
+      'sru_client_image_fid' => array('fid'),
+    ),
+  );
+  return $schema;
+}
+
+function sru_client_image_install() {
+  drupal_install_schema('sru_client_image');
+}
+
+function sru_client_image_uninstall() {
+  drupal_uninstall_schema('sru_client_image');
+  variable_del('sru_client_image_size');
+  variable_del('sru_client_image_directory');
+  // TODO should we delete the image files too?
+}
+
+
+
+

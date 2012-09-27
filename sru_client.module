@@ -1,0 +1,1203 @@
+<?php
+// $Id$
+/**
+ * Copyright (c) 2009 Madcap BV (http://www.madcap.nl)
+ * All rights reserved.
+ *
+ * Permission is granted for use, copying, modification, distribution,
+ * and distribution of modified versions of this work as long as the
+ * above copyright notice is included.
+ *
+ * Copyright (c) 2010 IISG (http://www.iisg.nl)
+ *
+ * @file
+ *  SRU Client module.
+ */
+
+/**
+ * Hook functions.
+ */
+
+/**
+ * Implementation of hook_init().
+ */
+function sru_client_init() {
+  // Include the views include file.
+  module_load_include('inc', 'sru_client', 'sru_client.views');
+  define('SRU_CLIENT_MAXIMUM_IDENTIFIERS_PER_REQUEST', 50);
+
+  // Initialize the session.
+  $_SESSION['collection_results']['local'] = FALSE;
+  $_SESSION['collection_results']['keywords'] = FALSE;
+}
+
+/**
+ * Implementation of hook_theme().
+ */
+function sru_client_theme() {
+  return array(
+    'sru_client_search_content_results_form' => array(
+      'arguments' => array('form' => NULL)
+  ),
+    'sru_client_list_sort_form' => array(
+      'arguments' => array('form' => NULL)
+  ),
+    'sru_client_asset_detail' => array(
+      'arguments' => array('cnid' => NULL, 'identifier' => NULL),
+  ),
+    'sru_client_asset_detail_item' => array(
+      'arguments' => array('collection_name' => NULL, 'key' => NULL, 'value' => NULL),
+  ),
+    'sru_client_search_content_results_summary' => array(
+      'arguments' => array('count' => NULL),
+  ),
+  );
+}
+
+/**
+ * Implementation of hook_menu().
+ */
+function sru_client_menu() {
+  $items = array();
+  $items['admin/content/sru/collection'] = array(
+    'title' => 'Collections',
+    'page callback' => 'sru_client_collection_overview',
+    'access arguments' => array('administer SRU collection'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/content/sru/collection/%/search'] = array(
+    'title' => 'Collection search',
+    'page callback' => 'sru_client_webservice_search',
+    'page arguments' => array(4, 6, 7),
+    'access arguments' => array('administer SRU collection'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['admin/content/sru/collection/%/details/%'] = array(
+    'title' => 'Asset',
+    'page callback' => 'theme',
+    'page arguments' => array('sru_client_asset_detail', 4, 6),
+    'access arguments' => array('administer SRU collection'),
+    'type' => MENU_CALLBACK,
+  );
+  $items['sru/search'] = array(
+    'title' => 'Search content',
+    'page callback' => 'sru_client_local_search',
+    'page arguments' => array(2),
+    'access arguments' => array('view SRU asset'),
+    'type' => MENU_NORMAL_ITEM,
+  );
+  $items['admin/settings/sru'] = array(
+    'title' => 'Asset settings',
+    'description' => 'Settings for asset modules. Various modules can add fields to assets.',
+    'page callback' => 'sru_client_settings_overview',
+    'access arguments' => array('administer SRU'),
+  );
+  $items['admin/settings/sru/main'] = array(
+    'title' => 'Assets',
+    'type' => MENU_DEFAULT_LOCAL_TASK,
+    'weight' => '-10',
+  );
+  return $items;
+}
+
+/**
+ * Menu callback. There are no default settings; this is just a placeholder.
+ */
+function sru_client_settings_overview() {
+  $output = t("Various modules can add fields to assets.");
+  return $output;
+}
+
+
+
+/**
+ * Implementation of hook_access();
+ */
+function sru_client_access($op, $node, $account) {
+  if ($node->type == 'sru_client_xml_standard') {
+    switch ($op) {
+      case 'view':
+      case 'create':
+      case 'update':
+      case 'delete':
+        return user_access('administer SRU xml standard');
+    }
+  }
+  elseif ($node->type == 'sru_client_collection') {
+    switch ($op) {
+      case 'view':
+      case 'create':
+      case 'update':
+      case 'delete':
+        return user_access('administer SRU collection');
+    }
+  }
+  elseif ($node->type == 'sru_client_asset') {
+    switch ($op) {
+      case 'view':
+        return user_access('view SRU asset');
+        break;
+      case 'create';
+      case 'update':
+      case 'delete':
+        return user_access('administer SRU asset');
+    }
+  }
+}
+
+/**
+ * Implementation of hook_perm().
+ */
+function sru_client_perm() {
+  return array(
+    'administer SRU',
+    'administer SRU asset',
+    'administer SRU collection',
+    'administer SRU xml standard',
+    'view SRU asset',
+  );
+}
+
+
+/**
+ * Implementation of hook_node_info().
+ */
+function sru_client_node_info() {
+  return array(
+    'sru_client_xml_standard' => array(
+      'name' => 'XML Standard',
+      'module' => 'sru_client',
+      'description' => t('Content Type containing the information required for the xml standard.'),
+      'title_label' => t('Name'),
+      'has_body' => FALSE,
+      'locked' => TRUE,
+  ),
+    'sru_client_collection' => array(
+      'name' => 'Collection',
+      'module' => 'sru_client',
+      'description' => t('Content Type containing the information required for the collection.'),
+      'title_label' => t('Name'),
+      'has_body' => TRUE,
+      'body_label' => t('Description'),
+      'locked' => TRUE,
+  ),
+    'sru_client_asset' => array(
+      'name' => 'Asset',
+      'module' => 'sru_client',
+      'description' => t('Content Type containing the information required for the asset.'),
+      'title_label' => t('Title'),
+      'has_body' => FALSE,
+      'locked' => TRUE,
+  ),
+  );
+}
+
+
+/**
+ * Create the search form.
+ *
+ * @param $form
+ *   Array containing form information.
+ * @param $collection
+ *   Object containing the collection node.
+ * @return array
+ *   Array containing form information.
+ */
+function sru_client_search_content_form($form, $keywords, $collection = FALSE, $maximum_records = FALSE) {
+  $form = array();
+  if ($collection) {
+    $form['nid'] = array(
+      '#type' => 'value',
+      '#default_value' => $collection->nid,
+    );
+  }
+  $form['keywords'] = array(
+    '#title' => t('Keywords'),
+    '#type' => 'textfield',
+    '#default_value' => urldecode($keywords),
+    '#required' => FALSE,
+    '#description' => t('Please enter a string to search for.'),
+  );
+
+  if ($collection) {
+    $options = drupal_map_assoc(array(10, 20, 50));
+    $form['maximum_records'] = array(
+      '#title' => t('Records'),
+      '#type' => 'select',
+      '#default_value' => (in_array($maximum_records, $options)) ? $maximum_records : 10,
+      '#options' => $options,
+    );
+  }
+
+  $form['submit'] = array(
+    '#value' => t('Search'),
+    '#type' => 'submit',
+  );
+  return $form;
+}
+
+/**
+ * Implementation of hook_validate().
+ */
+function sru_client_search_content_form_validate($form, $form_state) {
+  // Verify there is at least 1 keyword entered.
+  if (empty($form_state['values']['keywords'])) {
+    // Generate a form error.
+    form_set_error('keywords', t('Please enter at least one keyword to initiate the search request.'));
+  }
+  elseif (drupal_strlen($form_state['values']['keywords']) < 1) {
+    // Generate a form error.
+    form_set_error('keywords', t('Please enter a keyword which contains at least 3 characters.'));
+  }
+}
+
+/**
+ * Implementation of hook_submit().
+ *
+ * The search may be called from either the admin pages or the normal user pages.
+ */
+function sru_client_search_content_form_submit(&$form, &$form_state) {
+
+  // Verify if the collection nid is set, otherwise we assume it is a normal user search.
+  if (isset($form_state['values']['nid'])) {
+    // Add the keyword(s) to the url and redirect to the original form.
+    $form_state['redirect'] = 'admin/content/sru/collection/'. $form_state['values']['nid'] .'/search/'. urlencode($form_state['values']['keywords']) .'/'. $form_state['values']['maximum_records'];
+  }
+  else {
+    // Add the keyword(s) to the url and redirect to the original form.
+    $form_state['redirect'] = 'sru/search/'. urlencode($form_state['values']['keywords']);
+  }
+}
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function sru_client_nodeapi(&$node, $op, $a3, $a4) {
+  if ($node->type == 'sru_client_collection') {
+    switch ($op) {
+      case 'load':
+        $result = db_query('SELECT url, query_identifier_element, result_identifier_element, condition_prefix, xml_module FROM {sru_client_collection} WHERE nid = %d AND vid = %d', $node->nid, $node->vid);
+        if ($record = db_fetch_array($result)) {
+          $node->url = $record['url'];
+          $node->condition_prefix = $record['condition_prefix'];
+          $node->query_identifier_element = $record['query_identifier_element'];
+          $node->result_identifier_element = $record['result_identifier_element'];
+          $node->xml_module = $record['xml_module'];
+        }
+        break;
+      case 'delete':
+        db_query('DELETE FROM {sru_client_collection} WHERE nid = %d AND vid = %d', $node->nid, $node->vid);
+
+        // Delete all linked asset nodes.
+        $result = db_query('SELECT nid FROM {sru_client_asset} WHERE cnid = %d', $node->nid);
+        while ($record = db_fetch_array($result)) {
+          node_delete($record['nid']);
+        }
+        break;
+      case 'update':
+        db_query("UPDATE {sru_client_collection} SET xml_module = '%s', condition_prefix = '%s', query_identifier_element = '%s', result_identifier_element = '%s', url = '%s' WHERE nid = %d AND vid = %d", $node->xml_module, $node->condition_prefix, $node->query_identifier_element, $node->result_identifier_element, $node->url, $node->nid, $node->vid);
+        break;
+      case 'insert':
+        db_query("INSERT INTO {sru_client_collection} (nid, vid, url, query_identifier_element, result_identifier_element, condition_prefix, xml_module) VALUES (%d, %d, '%s', '%s', '%s', '%s', '%s')", $node->nid, $node->vid, $node->url, $node->query_identifier_element, $node->result_identifier_element, $node->condition_prefix, $node->xml_module);
+        break;
+    }
+  }
+  elseif ($node->type == 'sru_client_asset') {
+    switch ($op) {
+      case 'view':
+        $mimetype = (module_exists('sru_client_image') && isset($node->image->filemime)) ? $node->image->filemime : FALSE;
+        $node->content['asset_details']['#value'] = theme('sru_client_asset_detail', $node->cnid, $node->identifier, $mimetype);
+        break;
+      case 'load':
+        $result = db_query('SELECT url, identifier, cnid, source FROM {sru_client_asset} WHERE nid = %d AND vid = %d', $node->nid, $node->vid);
+        if ($record = db_fetch_array($result)) {
+          $node->url = $record['url'];
+          $node->cnid = $record['cnid'];
+          $node->identifier = $record['identifier'];
+          $node->source = $record['source'];
+        }
+        break;
+      case 'delete':
+        db_query('DELETE FROM {sru_client_asset} WHERE nid = %d AND vid = %d', $node->nid, $node->vid);
+        break;
+      case 'update':
+        db_query("UPDATE {sru_client_asset} SET url = '%s', identifier = '%s', cnid = %d, source = '%s' WHERE nid = %d AND vid = %d",
+        $node->url, $node->identifier, $node->cnid, $node->source, $node->nid, $node->vid
+        );
+        break;
+      case 'insert':
+        db_query("INSERT INTO {sru_client_asset} (nid, vid, url, identifier, cnid, source) VALUES (%d, %d, '%s', '%s', %d, '%s')",
+        $node->nid, $node->vid, $node->url, $node->identifier, $node->cnid, $node->source
+        );
+        break;
+    }
+  }
+}
+
+
+/**
+ * Implementation of hook_form();
+ */
+function sru_client_form(&$node, $form_state) {
+  $type = node_get_types('type', $node);
+  if ($node->type == 'sru_client_xml_standard') {
+    $form = array();
+    $form['title'] = array(
+      '#type' => 'textfield',
+      '#title' => check_plain($type->title_label),
+      '#description' => t('Please enter the xml standard name.'),
+      '#required' => TRUE,
+      '#default_value' => $node->title,
+      '#weight' => -5,
+    );
+    return $form;
+  }
+  elseif ($node->type == 'sru_client_collection') {
+    $form = array();
+
+    // Redirect happens before deleting a node in D6.
+    $form['destination'] = array(
+      '#type' => 'hidden',
+      '#value' => 'admin/content/sru/collection/',
+    );
+
+    $form['title'] = array(
+      '#type' => 'textfield',
+      '#title' => check_plain($type->title_label),
+      '#description' => t('Please enter the collection name.'),
+      '#required' => TRUE,
+      '#default_value' => $node->title,
+      '#weight' => -7,
+    );
+    $form['url'] = array(
+      '#type' => 'textfield',
+      '#title' => t('URL'),
+      '#description' => t('Please enter the SRU webservice URL.'),
+      '#default_value' => isset($node->url) ? $node->url : '',
+      '#weight' => -6,
+      '#required' => TRUE,
+    );
+
+    if (!count($modules = module_implements('sru_info'))) {
+      drupal_set_message(t('Please define one or more XML standards.'), 'error');
+      drupal_not_found();
+      die();
+    }
+
+    $options = array();
+    foreach ($modules as $module) {
+      $info = module_invoke($module, 'sru_info');
+      $options[$module] = $info['name'];
+    }
+
+    $form['xml_module'] = array(
+      '#type' => 'select',
+      '#title' => t('XML standard module'),
+      '#description' => t('Select the XML implementation to use for this collection.'),
+      '#default_value' => isset($node->xml_module) ? $node->xml_module : FALSE,
+      '#options' => $options,
+      '#weight' => -5,
+      '#required' => TRUE,
+    );
+    $form['condition_prefix'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Condition prefix'),
+      '#description' => t('Enter an optional condition prefix, for example iisg.collectionName=abc'),
+      '#default_value' => isset($node->condition_prefix) ? $node->condition_prefix : '',
+      '#weight' => -4,
+      '#required' => FALSE,
+    );
+    $form['query_identifier_element'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Identifier element (query)'),
+      '#default_value' => isset($node->query_identifier_element) ? $node->query_identifier_element : '',
+      '#required' => TRUE,
+      '#weight' => -3,
+    );
+    $form['result_identifier_element'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Identifier element  (result)'),
+      '#default_value' => isset($node->result_identifier_element) ? $node->result_identifier_element : '',
+      '#required' => TRUE,
+      '#weight' => -2,
+    );
+    $form['body_field'] = node_body_field($node, $type->body_label, $type->min_word_count);
+    $form['body_field']['body']['#rows'] = 5;
+    $form['body_field']['body']['#description'] = t('Please enter a brief description of the collection.');
+    return $form;
+  }
+  elseif ($node->type == 'sru_client_asset') {
+    $form = array();
+    $form['title'] = array(
+      '#type' => 'textfield',
+      '#title' => check_plain($type->title_label),
+      '#required' => TRUE,
+      '#default_value' => $node->title,
+      '#weight' => -3,
+    );
+    $form['url'] = array(
+      '#type' => 'textfield',
+      '#title' => t('URL'),
+      '#maxlength' => 255,
+      '#default_value' => isset($node->url) ? $node->url : '',
+    );
+    $form['identifier'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Identifier'),
+      '#maxlength' => 255,
+      '#default_value' => isset($node->identifier) ? $node->identifier : '',
+    );
+    $form['cnid'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Collection ID'),
+      '#maxlength' => 50,
+      '#default_value' => isset($node->cnid) ? $node->cnid : '',
+    );
+    $form['source'] = array(
+      '#type' => 'textfield',
+      '#title' => t('Source'),
+      '#maxlength' => 255,
+      '#description' => t('Remote location of an asset image'),
+      '#default_value' => isset($node->source) ? $node->source : '',
+    );
+    return $form;
+  }
+}
+
+
+/**
+ * Callback functions.
+ */
+
+/**
+ * Helper function to get a specific remote identifier.
+ *
+ * @param $cnid
+ *   Integer containing the collection node id
+ * @param $identifier
+ *   String containing the specific identifier.
+ * @return array
+ *   Array containing the result record.
+ */
+function sru_client_asset_get_on_identifier($cnid, $identifier) {
+  if ($identifier && ($collection = node_load($cnid))) {
+    $result = sru_client_do_query(FALSE, $collection->nid, 1, 1, '',  '{IDENTIFIER_ELEMENT}="'. $identifier .'"');
+    return isset($result['records'][0]) ? $result['records'][0] : FALSE;
+  } 
+  else {
+    return FALSE;
+  }
+}
+
+/**
+ * Callback for admin/content/sru/collection/%/search.
+ *
+ * Search the remote SRU webservice.
+ *
+ * @param $collection_nid
+ *   Integer containing the collection node id.
+ * @param $keywords
+ *   String containing the keywords to search for.
+ * @return string
+ *   String containing the themed output.
+ */
+function sru_client_webservice_search($collection_nid = FALSE, $keywords, $maximum_records) {
+  return sru_client_search_content(FALSE, $collection_nid, $keywords, $maximum_records);
+}
+
+/**
+ * Callback for sru/search.
+ *
+ * Search the remote SRU webservice, restricting the results to locally stored assets.
+ *
+ * @param $keywords
+ *   String containing the keywords to search for.
+ */
+function sru_client_local_search($keywords) {
+  return sru_client_search_content(TRUE, FALSE, $keywords, 10);
+}
+
+/**
+ * Search the remote SRU webservice.
+ *
+ * @param $local
+ *   If true the search results will be restricted to locally stored assets.
+ * @param $collection_nid
+ *   Integer containing the collection node id.
+ * @param $keywords
+ *   String containing the keywords to search for.
+ * @return string
+ *   String containing the themed output.
+ */
+function sru_client_search_content($local, $collection_nid, $keywords, $maximum_records) {
+
+  global $pager_page_array, $pager_total, $pager_total_items;
+
+  // Minimal 10 and maximum 50 records will be returned.
+  $maximum_records = max(10, min(50, (int)$maximum_records));
+  $output = '';
+
+  if ($local) {
+    // Add the main search form.
+    $output .= drupal_get_form('sru_client_search_content_form', $keywords);
+  }
+  else {
+    // Add the main search form with some admin-only form elements.
+    // Load the collection node.
+    if (!$collection = node_load($collection_nid)) {
+      drupal_set_message(t('The collection node could not be loaded.'), 'error');
+      return $output;
+    }
+
+    // Set drupal title based on the collection title.
+    drupal_set_title(t('Collection @collection_title search', array('@collection_title' => check_plain($collection->title))));
+
+    // Add the main search form.
+    $output .= drupal_get_form('sru_client_search_content_form', $keywords, $collection, $maximum_records);
+  }
+
+  // Check if any keyword is given.
+  if (!empty($keywords)) {
+
+    $page = isset($_GET['page']) ? $_GET['page'] : '';
+
+    // Convert comma-separated $page to an array, used by other functions.
+    $pager_page_array = explode(',', $page);
+
+    $start_record = ($pager_page_array[0] * $maximum_records) + 1;
+
+    // Check if the search is changed, otherwise don't search again.
+    if (($_SESSION['collection_results']['local'] != $local) || ($keywords != $_SESSION['collection_results']['keywords'])) {
+
+      // Set new keywords.
+      $_SESSION['collection_results']['keywords'] = $keywords;
+
+      $_SESSION['collection_results']['local'] = $local;
+
+      // Reset session vars.
+      $_SESSION['collection_results']['count'] = 0;
+      $_SESSION['collection_results']['records'] = array();
+
+      // Only search locally stored asset.
+      if ($local) {
+
+        // Get number of locally stored assets.
+        $asset_count = (int)db_result(db_query("SELECT COUNT(n.nid) as count FROM {node} n INNER JOIN {sru_client_asset} a on a.nid = n.nid WHERE n.type = 'sru_client_asset' AND status = 1"));
+
+        // Limit the collection search on a maximum number of identifiers per request.
+        for ($i=0; $i<ceil($asset_count/SRU_CLIENT_MAXIMUM_IDENTIFIERS_PER_REQUEST) ; $i++) {
+
+          // Get the local asset identifiers.
+          $results = db_query_range("SELECT n.nid, a.identifier FROM {node} n INNER JOIN {sru_client_asset} a on a.nid = n.nid WHERE n.type = 'sru_client_asset' AND status = 1", $i*SRU_CLIENT_MAXIMUM_IDENTIFIERS_PER_REQUEST, SRU_CLIENT_MAXIMUM_IDENTIFIERS_PER_REQUEST);
+
+          // Build the query to limit to search to only search on locally stored assets.
+          $identifiers = array();
+          while ($asset = db_fetch_object($results)) {
+            $identifiers[] = '({IDENTIFIER_ELEMENT}="'. $asset->identifier .'")';
+          }
+
+          $identifier_query = ' and ('. implode(' or ', $identifiers) .')';
+
+          // Run the query.
+          if ($result = sru_client_do_query($local, FALSE, 1, SRU_CLIENT_MAXIMUM_IDENTIFIERS_PER_REQUEST, $keywords, $identifier_query)) {
+            $_SESSION['collection_results']['count'] += $result['count'];
+            $_SESSION['collection_results']['records'] = array_merge($_SESSION['collection_results']['records'], $result['records']);
+          }
+        }
+      }
+      else {
+        // Run the query.
+        if ($result = sru_client_do_query($local, $collection_nid, $start_record, $maximum_records, $keywords)) {
+          $_SESSION['collection_results']['count'] += $result['count'];
+          $_SESSION['collection_results']['records'] = array_merge($_SESSION['collection_results']['records'], $result['records']);
+        }
+      }
+    }
+
+    if ($local) {
+      $duplicates = 0;
+      $unique_identifiers = array();
+      foreach ($_SESSION['collection_results']['records'] as $record) {
+        // Extract duplicates from the count.
+        $collection = node_load($record['cnid']);
+
+        if (!isset($unique_identifiers[$record[$collection->result_identifier_element]])) {
+          $unique_identifiers[$record[$collection->result_identifier_element]] = TRUE;
+        }
+        else {
+          $duplicate_count++;
+        }
+      }
+
+      // Extract the number of duplicates from the total count. This is more accurate then count the number of $unique_identifiers.
+      $_SESSION['collection_results']['count'] = $_SESSION['collection_results']['count'] - $duplicate_count;
+    }
+
+    // We calculate the total of pages as ceil(items / limit).
+    $pager_total_items[0] = $_SESSION['collection_results']['count'];
+    $pager_total[0] = ceil($pager_total_items[0] / $maximum_records);
+    $pager_page_array[0] = max(0, min((int)$pager_page_array[0], ((int)$pager_total[0]) - 1));
+
+    // Verify if one or more records is present.
+    if ($_SESSION['collection_results']['records']) {
+
+      // Add custom js (jquery).
+      drupal_add_js(drupal_get_path('module', 'sru_client') .'/sru_client.js');
+
+      $output .= theme('sru_client_search_content_results_summary', $_SESSION['collection_results']['count'], $start_record, $maximum_records, $keywords);
+
+      if ($local) {
+        // Render the result form (as table).
+        $output .= drupal_get_form('sru_client_search_content_results_form', $local, $_SESSION['collection_results']['records'], $start_record, $maximum_records);
+      }
+      else {
+        // Render the result form (as table).
+        $output .= drupal_get_form('sru_client_search_content_results_form', $local, $_SESSION['collection_results']['records']);
+      }
+      // Render the pager.
+      $output .= theme('pager');
+    }
+    else {
+      // No records found, so set a message.
+      drupal_set_message(t('No search results found.'), 'info');
+    }
+  }
+
+  // Return the themed output.
+  return $output;
+}
+
+/**
+ * Implementation of hook_form().
+ *
+ * Render the results of the SRU API search.
+ *
+ * @param $local
+ *   If true the search results will be restricted to locally stored assets.
+ * @param $records
+ *   Array containing the result records.
+ * @param $start_record
+ *   Index of the first record to show.
+ * @param $maximum_records
+ *   Integer of maximum records to show.
+ * @return form
+ */
+function sru_client_search_content_results_form($form_state, $local, $records, $start_record = FALSE, $maximum_records = FALSE) {
+  if ($start_record && $maximum_records) {
+    // Get the records to display in the table with pager.
+    $records = array_slice($records, $start_record -1, $maximum_records);
+  }
+  foreach ($records as $record) {
+    // Get the cnid from the url.
+    $cnid = $record['cnid'];
+    $collection = node_load($cnid);
+    $options[$record[$collection->result_identifier_element]] = '';
+
+    $fields = module_invoke($collection->xml_module, 'sru_extract_fields', $record);
+
+    $form[$record[$collection->result_identifier_element]] = array(
+      '#tree' => TRUE,
+    );
+
+    if ($fields['title']) {
+      $title =  $fields['title'];
+    }
+    elseif ($fields['description']) {
+      $title = truncate_utf8($fields['description'], 100, TRUE, TRUE);
+    }
+    else {
+      $title = 'No title available';
+    }
+
+    // Table values, will no be used further.
+    if ($local) {
+      $asset_id = sru_client_get_asset_nid($cnid, $record[$collection->result_identifier_element]);
+      $form[$record[$collection->result_identifier_element]]['_title'] = array('#value' => l($title, 'node/'. $asset_id));
+    }
+    else {
+      $form[$record[$collection->result_identifier_element]]['_title'] = array('#value' => l($title, 'admin/content/sru/collection/'. $cnid .'/details/'. $record[$collection->result_identifier_element]));
+    }
+
+    $form[$record[$collection->result_identifier_element]]['author'] = array('#value' => check_plain($fields['author']));
+    $form[$record[$collection->result_identifier_element]]['cnid']   = array('#type' => 'value', '#value' => $cnid);
+
+    // Only add items below for admins
+    if (!$local) {
+      $form[$record[$collection->result_identifier_element]]['collection_name'] = array('#value' => check_plain($fields['collectionName']));
+      // Values needed to save assets.
+      $form[$record[$collection->result_identifier_element]]['url']    = array('#type' => 'value', '#value' => $fields['deeplink']);
+      $form[$record[$collection->result_identifier_element]]['source'] = array('#type' => 'value', '#value' => $fields['source']);
+      $form[$record[$collection->result_identifier_element]]['title']  = array('#type' => 'value', '#value' => $title);
+      if (module_exists('sru_client_taxonomy')) {
+        $terms = sru_client_taxonomy_terms($fields, $collection->xml_module);
+        $form[$record[$collection->result_identifier_element]]['sru_client_terms']  = array('#type' => 'value', '#value' => $terms);
+      }
+    }
+  }
+
+  if ($local) {
+    $form['local'] = array(
+      '#type' => 'value',
+      '#value' => (int)$local,
+    );
+  }
+  else {
+    // Only add items below for admins
+    $form['identifier'] = array(
+      '#type' => 'checkboxes',
+      '#options' => $options,
+    );
+    $form['submit'] = array(
+      '#type' => 'submit',
+      '#value' => t('Add asset(s)'),
+      '#submit' => array('sru_client_search_content_results_form_submit'),
+    );
+    $form['update'] = array(
+      '#type' => 'submit',
+      '#value' => t('Update asset(s)'),
+      '#submit' => array('sru_client_search_content_results_form_update'),
+    );
+    // Preserve the paging
+    $form['#redirect'] = FALSE;
+  }
+  return $form;
+}
+
+
+/**
+ * Implementation of hook_submit().
+ */
+function sru_client_search_content_results_form_submit($form, $form_state) {
+  global $user;
+
+  foreach ($form_state['values']['identifier'] as $identifier => $value) {
+
+    $cnid = $form_state['values'][$identifier]['cnid'];
+
+    // Verify that the item is selected and not already exists.
+    if ($value && !sru_client_get_asset_nid($cnid, $identifier)) {
+
+      // Create new asset node object.
+      $asset = new stdClass();
+      $asset->uid = $user->uid;
+      $asset->status = 1;
+      $asset->type = 'sru_client_asset';
+      $asset->title = $form_state['values'][$identifier]['title'];
+      $asset->identifier = $identifier;
+      $asset->url = $form_state['values'][$identifier]['url'];
+      $asset->cnid = $cnid;
+      $asset->source = $form_state['values'][$identifier]['source'];
+      if (module_exists('sru_client_taxonomy')) {
+        $asset->sru_client_terms = $form_state['values'][$identifier]['sru_client_terms'];
+      }
+      // Save the asset node.
+      node_save($asset);
+    }
+  }
+}
+
+/**
+ * Implementation of hook_submit().
+ */
+function sru_client_search_content_results_form_update($form, $form_state) {
+  global $user;
+
+  foreach ($form_state['values']['identifier'] as $identifier => $value) {
+
+    $cnid = $form_state['values'][$identifier]['cnid'];
+    // Verify that the item exists.
+    if ($nid = sru_client_get_asset_nid($cnid, $identifier)) {
+
+      $node = node_load($nid);
+      $asset->vid = $node->vid;
+      $asset->nid = $nid;
+      $asset->uid = $user->uid;
+      $asset->status = 1;
+      $asset->type = 'sru_client_asset';
+      $asset->title = $form_state['values'][$identifier]['title'];
+      $asset->identifier = $identifier;
+      $asset->url = $form_state['values'][$identifier]['url'];
+      $asset->cnid = $cnid;
+      $asset->source = $form_state['values'][$identifier]['source'];
+      if (module_exists('sru_client_taxonomy')) {
+        $asset->sru_client_terms = $form_state['values'][$identifier]['sru_client_terms'];
+      }
+      // Save the asset node.
+      node_save($asset);
+    }
+  }
+}
+
+/**
+ * Callback for admin/content/sru/collection.
+ *
+ * Show a list of configured collections.
+ */
+function sru_client_collection_overview() {
+
+  // Set the table headers.
+  $headers = array(t('Name'), t('Description'), t('URL'), t('Query prefix'), t('Options'));
+
+  $rows = array();
+
+  // Fetch all active collection nodes.
+  $result = db_query(db_rewrite_sql("SELECT nid FROM {node} WHERE type = 'sru_client_collection' AND status = 1 ORDER BY title"));
+
+  while ($collection_obj = db_fetch_object($result)) {
+
+    // Load the collection node.
+    $collection = node_load($collection_obj->nid);
+
+    // Add a table record.
+    $rows[] = array(
+      l($collection->title, 'node/'. $collection->nid),
+      truncate_utf8(check_plain(strip_tags($collection->body)), 50, TRUE, TRUE),
+      check_plain($collection->url),
+      truncate_utf8(check_plain($collection->condition_prefix), 30, FALSE, TRUE),
+      l(t('Search'), 'admin/content/sru/collection/'. $collection->nid .'/search'),
+    );
+  }
+
+  $output = '';
+
+  // Verify if one ore more collection nodes are present.
+  if (!count($rows)) {
+    drupal_set_message(t('There are currently no collections configured.'), 'info');
+  }
+  else {
+    // Create the table.
+    $output .= theme('table', $headers, $rows);
+  }
+  $output .= l(t('Add new collection'), 'node/add/sru-client-collection');
+  return $output;
+}
+
+/**
+ * Helper functions.
+ */
+
+/**
+ * Helper function to construct the url arguments to be sent to the SRU API.
+ *
+ * @param $collection
+ *   Collection node object.
+ * @param $keywords
+ *   String containing the keywords to be searched on.
+ * @param $query_suffix
+ *   String containing the suffix to be used for the query, for example the identifier conditions.
+ * @param $maximum_records
+ *   Integer containing the maximum records to be received.
+ * @param $start_record
+ *   Integer containing the start record to be passed to the SRU.
+ * @return string
+ *   String containing the url arguments to be sent to the collection.
+ */
+function sru_client_get_url_arguments($collection, $keywords, $query_suffix, $maximum_records, $start_record) {
+  // Allow to search for all records.
+  if ($keywords == '*') {
+    $keywords ='';
+  }
+
+  $query = '';
+  if (!empty($keywords)) {
+    $query = array();
+    foreach (module_invoke($collection->xml_module, 'sru_condition_fields') as $field) {
+      // In CQL ANY is boolean OR and ALL is boolean AND
+      $query[] = $field .' all "'. $keywords .'"';
+    }
+    $query = '(('. implode(') or (', $query) .'))';
+  }
+  // Construct the prefix, if available.
+  $prefix = (!empty($collection->condition_prefix)) ? '('. $collection->condition_prefix .') AND ' : '';
+
+  // Search for all records.
+  if (empty($query_suffix) && empty($keywords)) {
+    $prefix = (!empty($collection->condition_prefix)) ? '('. $collection->condition_prefix .') ' : '';
+  }
+
+  $query_suffix = str_replace('{IDENTIFIER_ELEMENT}', $collection->query_identifier_element , $query_suffix);
+
+  $query = $prefix . $query . $query_suffix;
+  return module_invoke($collection->xml_module, 'sru_url_arguments', $query, $collection, $maximum_records, $start_record);
+}
+
+/**
+ * Helper function to do the actual query on the SRU API.
+ *
+ * @param $cnid
+ *   Integer containing the collection node id.
+ * @param $keywords
+ *   String containing the keywords to search for.
+ * @param $start_record
+ *   Integer containing the record to start from.
+ * @param $maximum_records
+ *   Number of records to return at once.
+ * @return array
+ *   Array containing the result information.
+ */
+function sru_client_do_query($local, $cnid = FALSE, $start_record = 1, $maximum_records = 10, $keywords = '', $query_suffix = '') {
+  $result = array();
+  $result['count'] = 0;
+  $result['records'] = array();
+  $collection_urls = array();
+
+  // Check if the collection nid is passed.
+  if ($cnid) {
+    // Load collection.
+    if (!$collection = node_load($cnid)) {
+      drupal_set_message(t('The collection node could not be loaded.'), 'error');
+      return FALSE;
+    }
+
+    // Construct the complete url.
+    $collection_urls[$cnid] = $collection->url .'?'. sru_client_get_url_arguments($collection, $keywords, $query_suffix, $maximum_records, $start_record);
+  }
+  else {
+    // Query all available collections.
+    $collections = db_query("SELECT nid FROM {node} WHERE type = 'sru_client_collection' AND status = 1");
+
+    while ($collection_obj = db_fetch_object($collections)) {
+      $collection = node_load($collection_obj->nid);
+
+      // Construct the complete url.
+      $collection_urls[$collection->nid] = $collection->url .'?'. sru_client_get_url_arguments($collection, $keywords, $query_suffix, $maximum_records, $start_record);
+    }
+  }
+
+  // Query each collection (1 or more).
+  foreach ($collection_urls as $cnid => $url) {
+    // Do request.
+      $response = drupal_http_request($url);
+    // Instead of checking for absence of $response->error make sure there is a result.
+    if ($response->code == '200') {
+      // Get the total results count
+      $result['count'] += sru_client_get_record_count($response->data);
+
+      // Load the collection node to get the xml module to use.
+      $collection = node_load($cnid);
+
+      // Get the actual data records.
+      $records = module_invoke($collection->xml_module, 'sru_convert_xml', $response->data, $cnid);
+
+      // Add the records to the resultset.
+      $result['records'] = array_merge($result['records'], $records);
+    }
+    else {
+      drupal_set_message(t('The search failed: @error', array('@error' => check_plain($response->error))), 'error');
+    }
+  }
+  return $result;
+}
+
+/**
+ * Helper function to return the total number of records.
+ *
+ * @param $xml
+ *   String containing the xml content returned by the webservice.
+ * @return Integer
+ *   Integer containing the records count.
+ */
+function sru_client_get_record_count($xml) {
+  $dom = new DOMDocument();
+  $dom->loadXML($xml);
+  return (int)$dom->getElementsByTagName('numberOfRecords')->item(0)->nodeValue;
+}
+
+/**
+ * Helper function to get the node id corresponding with the identifier.
+ *
+ * @param $cnid
+ *   Integer containing the collection node id.
+ * @param $identifier
+ *   identifier_element xml variable.
+ * @return integer
+ *   Integer containing the asset node id.
+ */
+function sru_client_get_asset_nid($cnid, $identifier) {
+  return (int)db_result(db_query("SELECT nid FROM {sru_client_asset} WHERE identifier = '%s' AND cnid = %d", $identifier, $cnid));
+}
+
+/**
+ * Theming functions.
+ */
+
+/**
+ * Function to theme a brief summary of the search result.
+ *
+ * @param $count
+ *   Integer containing the total number of records.
+ * @param $start_record
+ *   Integer containing the first record index that will be displayed.
+ * @param $maximum_records
+ *   Integer containing the number of records to be displayed.
+ * @param $keywords
+ *   String containing the keywords the user did look for.
+ * @return string
+ *   String containing the themed output.
+ */
+function theme_sru_client_search_content_results_summary($count, $start_record, $maximum_records, $keywords) {
+  $output = '';
+  $output .= '<span class="collection-search-summary">';
+  $output .= t('Results @start_record - @end_record of @count for "@keywords".',
+    array(
+      '@start_record' => $start_record,
+      '@end_record' => min($count, ($maximum_records + $start_record - 1)),
+      '@count' => $count,
+      '@keywords' => $keywords,
+    )
+  );
+  $output .= '</span>';
+  return $output;
+}
+
+/**
+ * Theming function to the the result form.
+ *
+ * @param $form
+ *   Array containing the form information.
+ * @return string
+ *   String containing a themed table with form elements.
+ */
+function theme_sru_client_search_content_results_form($form) {
+  $output = '';
+  $local = $form['local']['#value'];
+
+  $rows = array();
+  foreach (element_children($form) as $identifier) {
+    $row = array();
+
+    if (isset($form[$identifier]['_title'])) {
+
+      $cnid = $form[$identifier]['cnid']['#value'];
+
+      // Verify if the asset with this identifier already exists.
+      if (sru_client_get_asset_nid($cnid, $identifier)) {
+        // Disable the checkbox so the user can't add a duplicate asset.
+        $form['identifier'][$identifier]['#attributes']['checked'] = TRUE;
+        $form['identifier'][$identifier]['#attributes']['disabled'] = TRUE;
+      }
+
+      if (!$local) {
+        // Render the checkbox form element.
+        $row[] = array('data' => drupal_render($form['identifier'][$identifier]), 'class' => 'search-result-create-asset');
+      }
+
+      // Render the title form element.
+      $row[] = array('data' => drupal_render($form[$identifier]['_title']), 'class' => 'search-result-title');
+
+      // Render the author form element.
+      $row[] = array('data' => drupal_render($form[$identifier]['author']), 'class' => 'search-result-author');
+
+      if (!$local) {
+        // Render the collection name form element.
+        $row[] = array('data' => drupal_render($form[$identifier]['collection_name']), 'class' => 'search-result-collection-name');
+      }
+
+      // Add all cells to the record
+      $rows[] = $row;
+    }
+  }
+
+  // Set table header.
+  $header = array();
+
+  if (!$local) {
+    $header[] = '<input type="checkbox" class="search-result-select-all"/>';
+  }
+
+  $header[] = t('Title');
+  $header[] = t('Author');
+
+  if (!$local) {
+    $header[] = t('Collection name');
+  }
+
+  // Render the table.
+  $output .= theme('table', $header, $rows, array('class' => 'collection-search'));
+
+  // Render the form.
+  $output .= drupal_render($form);
+  return $output;
+}
+
+/**
+ * Theme an sru_client_asset.
+ *
+ * Show the (remote) content of an asset.
+ *
+ * @param $cnid
+ *   Integer containing the collection node id.
+ * @param $identifier
+ *   Integer containing the remote asset identifier.
+ * @param $mimetype
+ *   String indicating the mimetype of a remote asset source.
+ * @return string
+ *   Themed asset.
+ */
+function theme_sru_client_asset_detail($cnid, $identifier, $mimetype = FALSE) {
+  if ($record = sru_client_asset_get_on_identifier($cnid, $identifier)) {
+
+    // Load the collection node.
+    $collection = node_load($cnid);
+
+    // Extract all data fields.
+    $fields = module_invoke($collection->xml_module, 'sru_extract_fields', $record);
+    if (module_exists('sru_client_taxonomy')) {
+      // Terms are stored in a vocabulary, so hide their source field.
+      $fields = sru_client_taxonomy_remove_taxonomy($fields, $collection->xml_module);
+    }
+
+    $output = '<div class="asset-detail">';
+    foreach ($fields as $key => $value) {
+
+    // Verify the value is available.
+      if ($value) {
+        $value = theme('sru_client_asset_detail_item', $fields['collectionName'], $key, $value, $mimetype);
+        if (!empty($value)) {
+          $output .= '<div class="asset-detail-item"><label>'. t(drupal_ucfirst(check_plain($key))) .': </label>';
+          $output .= $value .'</div>';
+        }
+      }
+    }
+    $output .= '</div>';
+    return $output;
+  }
+}
+
+/**
+ * Theming function to theme the detail item.
+ *
+ * @param $fields
+ *   Array containing detail fields.
+ * @param $key
+ *   String containing the item which will be themed.
+ * @param $mimetype
+ *   String indicating the mimetype of a remote asset source.
+ * @return string
+ *   String containing the themed output.
+ */
+function theme_sru_client_asset_detail_item($collection_name, $key, $value, $mimetype = FALSE) {
+  $output = '';
+
+  if ($key == 'source') {
+    if (!$mimetype) {
+      // Download the file referenced to.
+      $result = drupal_http_request($value);
+      if (!($result->code == 200 || $result->redirect_code == 200)) {
+        drupal_set_message(t('Unable to retrieve source file: @value', array('@value' => $value)), 'error');
+        return;
+      }
+      $mimetype = $result->headers['Content-Type'];
+    }
+
+    // Check for a image content-type.
+    if (preg_match('/^image\//', $mimetype)) {
+      $output .= theme('image', $value, '', '', NULL, FALSE);
+    }
+  }
+  else {
+    $output .= check_plain($value);
+  }
+  return $output;
+}
+

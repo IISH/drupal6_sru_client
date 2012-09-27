@@ -1,0 +1,123 @@
+// $Id$
+
+= SRU Client =
+
+SRU (Search & Retrieve URL Service) is a URL-based alternative to SRW (Search & Retrieve Web Service). This is a search API over HTTP.
+
+References:
+http://www.oclc.org/research/activities/srw
+http://www.loc.gov/standards/sru/
+
+
+= Node types =
+
+This module provides two node types: collection and asset.
+
+  Collection: a reference to an SRU webservice. Using a condition prefix a subset of the available data can be chosen.
+
+  Asset: a reference to a remote SRU object (record). A few fields will be stored in the node, including title, URL and 
+  remote image location (if available). Other fields may be stored using sub-modules.
+
+  Asset field "source" contains the URL of a remote media object (image, audio, video). No local copy is made,
+  as media may be copyrighted and file sizes may be huge.
+
+
+= Callbacks =
+
+sru/search   
+
+  search form to search the remote webservice
+
+admin/content/sru/collection/*
+
+  list/create collections
+  search a remote webservice
+  add/update assets
+
+
+= Funtions =
+
+search_content(): 
+
+  shows search form (search_content_form) and search results (search_content_results_form)
+
+  searching from the admin pages will search through the whole webservice.
+  searching from sru/search will limit results to locally stored assets. internally this is determined by parameter $local.
+
+  search_content() will call 
+    do_query() which will call
+      get_url_arguments() to create the search query
+      drupal_http_request()
+      hook_convert_xml() to convert the resulting XML to a structured array
+      return $records
+
+search_content_results_form():
+
+  show a list of results
+  for admins: add checkboxes to add/update assets
+
+asset_detail():
+
+  show the remote object
+
+  asset_detail() will call
+    asset_get_on_identifier() which will call
+      do_query()
+  followed by
+    hook_extract_fields($records) to translate resulting records into a field-value array
+
+
+= XML modules =
+
+XML modules translate SRU XML output. Currently two XML modules are available.
+
+  sru_client_dc: Dublic Core
+  sru_client_marc: MARC 21
+
+Both these modules are specific for IISG. You should adjust these modules to your own use case, or build a new one.
+
+An XML module should support the following hooks:
+
+  hook_url_arguments: Construct the complete query argument list
+  hook_extract_fields: Select which fields to show and create a field-value array
+  hook_convert_xml: Convert resulting records into a structured array
+  hook_condition_fields: Define which fields to search on
+
+
+Submodules:
+
+= sru_client_image =
+
+If an asset has a source available, create a thumbnail of the remote image and store it locally.
+This module uses the Drupal files table.
+The default image thumbnail size is configurable.
+If imagecache is enabled all presets may be selected in views.
+
+
+= sru_client_termcopy =
+
+This is a simple module. On asset insert or update it copies all terms from a collection to the asset.
+
+
+= sru_client_taxonomy =
+
+Designate a source remote object field, and a destination vocabulary. On asset add/update this module 
+will copy all terms from source field to destination vocabulary.
+
+
+= TODO = 
+
+  maximumRecords 20 (available via EXPLAIN in configInfo)
+  numberOfRecords 10 (add field in collection?)
+
+  make sru_client_marc generic: field mapping in separate file or data structure
+
+  error message while adding or updating assets: add asset nid to message
+  
+  file_validate_image_resolution: replace by image_scale_and_crop (which does not set a message)
+
+  use mimedetect module?
+
+  all texts translatable
+
+

@@ -1,0 +1,36 @@
+<?php
+
+/**
+ * @file
+ * SRU Client Termcopy module.
+ *
+ * Copies all terms of the corresponding collection to an asset.
+ */
+
+/**
+ * Implementation of hook_nodeapi().
+ */
+function sru_client_termcopy_nodeapi(&$node, $op, $teaser, $page) {
+  if (!($node->type == 'sru_client_asset')) {
+    return;
+  }
+  if (!(module_exists('taxonomy'))) {
+    return;
+  }
+
+  switch ($op) {
+    case 'presave':
+      if (isset($node->cnid)) {
+        $collection = node_load($node->cnid);
+        foreach ($collection->taxonomy as $tid => $term) {
+          if (!isset($node->taxonomy[$tid])) {
+            $node->taxonomy[$tid] = $term;
+          }
+        }
+      }
+      break;
+  }
+  return;
+}
+
+
